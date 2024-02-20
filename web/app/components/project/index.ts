@@ -74,20 +74,13 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    */
   @tracked protected shouldAnimate = false;
 
-  /**
-   * Locally tracked project attributes.
-   * Initially set to the project's attributes;
-   * updated as the user makes changes.
-   */
-  @tracked protected title = this.args.project.title;
-  @tracked protected description = this.args.project.description;
-  @tracked protected status = this.args.project.status;
+  @tracked private newTitle: string | null = null;
+  @tracked private newDescription: string | null = null;
+  @tracked private newStatus: ProjectStatus | null = null;
 
   @tracked protected jiraIssue?: JiraPickerResult;
-  @tracked protected hermesDocuments: RelatedHermesDocument[] =
-    this.args.project.hermesDocuments ?? [];
-  @tracked protected externalLinks: RelatedExternalLink[] =
-    this.args.project.externalLinks ?? [];
+  @tracked protected newHermesDocuments: RelatedHermesDocument[] | null = null;
+  @tracked protected newExternalLinks: RelatedExternalLink[] | null = null;
 
   @tracked titleIsSaving = false;
   @tracked descriptionIsSaving = false;
@@ -109,6 +102,26 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Used to update the resource in the array.
    */
   @tracked private resourceToEditIndex?: number;
+
+  protected get title() {
+    return this.newTitle ?? this.args.project.title;
+  }
+
+  protected get description() {
+    return this.newDescription ?? this.args.project.description;
+  }
+
+  protected get status() {
+    return this.newStatus ?? this.args.project.status;
+  }
+
+  protected get hermesDocuments() {
+    return this.newHermesDocuments ?? this.args.project.hermesDocuments ?? [];
+  }
+
+  protected get externalLinks() {
+    return this.newExternalLinks ?? this.args.project.externalLinks ?? [];
+  }
 
   /**
    * Whether Jira is configured for the project.
@@ -213,6 +226,11 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
     };
   }
 
+  private resetLocalState() {
+    this.newTitle = null;
+    this.newDescription = null;
+  }
+
   /**
    * The action to run when the "edit external link" modal is dismissed.
    * Hides the modal and resets the local state.
@@ -253,13 +271,10 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Removes the resource from the correct array, then saves the project.
    */
   @action protected deleteResource(doc: RelatedResource): void {
-    const cachedDocuments = this.hermesDocuments.slice();
-    const cachedLinks = this.externalLinks.slice();
-
     if ("googleFileID" in doc) {
-      this.hermesDocuments.removeObject(doc);
+      this.newHermesDocuments.removeObject(doc);
     } else {
-      this.externalLinks.removeObject(doc);
+      this.newExternalLinks.removeObject(doc);
     }
     void this.saveProjectResources.perform(cachedDocuments, cachedLinks);
   }
@@ -270,7 +285,7 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Runs when a user selects a new status from the dropdown.
    */
   @action protected changeStatus(status: ProjectStatus): void {
-    this.status = status;
+    this.newStatus = status;
     void this.saveProjectInfo.perform("status", status);
   }
 
@@ -280,7 +295,7 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Runs when the user accepts the EditableField changes.
    */
   @action protected saveTitle(newValue: string): void {
-    this.title = newValue;
+    this.newTitle = newValue;
     this.titleIsSaving = true;
     void this.saveProjectInfo.perform("title", newValue);
   }
@@ -291,7 +306,7 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Runs when the user accepts the EditableField changes.
    */
   @action protected saveDescription(newValue: string): void {
-    this.description = newValue;
+    this.newDescription = newValue;
     this.descriptionIsSaving = true;
     void this.saveProjectInfo.perform("description", newValue);
   }
@@ -333,14 +348,11 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Adds a resource to the correct array, then saves the project.
    */
   @action protected addDocument(resource: RelatedHermesDocument) {
-    const cachedDocuments = this.hermesDocuments.slice();
+    this.newHermesDocuments = this.hermesDocuments.slice();
+    this.newHermesDocuments.unshiftObject(resource);
 
-    this.hermesDocuments.unshiftObject(resource);
-
-    void this.saveProjectResources.perform(
-      cachedDocuments,
-      this.externalLinks.slice(),
-    );
+    void this.saveProjectResources.perform();
+    s;
   }
 
   /**
@@ -348,34 +360,27 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Adds a resource to the correct array, then saves the project.
    */
   @action protected addLink(resource: RelatedExternalLink) {
-    const cachedLinks = this.externalLinks.slice();
+    this.newExternalLinks = this.externalLinks.slice();
+    this.newExternalLinks.unshiftObject(resource);
 
-    this.externalLinks.unshiftObject(resource);
-
-    void this.saveProjectResources.perform(
-      this.hermesDocuments.slice(),
-      cachedLinks,
-    );
+    void this.saveProjectResources.perform();
   }
 
   @action protected saveExternalLink(link: RelatedExternalLink) {
-    const cachedLinks = this.externalLinks.slice();
-
     assert(
       "resourceToEditIndex must exist",
       this.resourceToEditIndex !== undefined,
     );
 
-    this.externalLinks[this.resourceToEditIndex] = link;
+    this.newExternalLinks = this.externalLinks.slice();
+
+    this.newExternalLinks[this.resourceToEditIndex] = link;
 
     // Replacing an individual link doesn't cause the getter
     // to recompute, so we manually save the array.
-    this.externalLinks = this.externalLinks.slice();
+    this.newExternalLinks = this.newExternalLinks.slice();
 
-    void this.saveProjectResources.perform(
-      this.hermesDocuments.slice(),
-      cachedLinks,
-    );
+    void this.saveProjectResources.perform();
 
     this.editModalIsShown = false;
     this.resourceToEdit = undefined;
@@ -591,6 +596,8 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
             this.descriptionIsSaving = false;
             break;
         }
+
+        this.resetLocalState();
       }
     },
   );
@@ -605,6 +612,7 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
     const issue = await this.fetchSvc
       .fetch(`/api/${this.configSvc.config.api_version}/jira/issues/${id}`)
       .then((response) => response?.json());
+    // TODO: what happens when model changes
     this.jiraIssue = issue;
   });
 
@@ -613,30 +621,26 @@ export default class ProjectIndexComponent extends Component<ProjectIndexCompone
    * Creates a PUT request to the DB and conditionally triggers
    * the resource-highlight animation.
    */
-  protected saveProjectResources = task(
-    async (cachedDocuments, cachedLinks) => {
-      try {
-        await this.fetchSvc.fetch(
-          `/api/${this.configSvc.config.api_version}/projects/${this.args.project.id}/related-resources`,
-          {
-            method: "PUT",
-            body: JSON.stringify(this.formattedRelatedResources),
-            headers: {
-              "Content-Type": "application/json",
-            },
+  protected saveProjectResources = task(async () => {
+    try {
+      await this.fetchSvc.fetch(
+        `/api/${this.configSvc.config.api_version}/projects/${this.args.project.id}/related-resources`,
+        {
+          method: "PUT",
+          body: JSON.stringify(this.formattedRelatedResources),
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
-      } catch (e) {
-        this.externalLinks = cachedLinks;
-        this.hermesDocuments = cachedDocuments;
-
-        this.flashMessages.critical((e as any).message, {
-          title: "Unable to save resource",
-          timeout: FLASH_MESSAGES_LONG_TIMEOUT,
-        });
-      }
-    },
-  );
+        },
+      );
+    } catch (e) {
+      this.flashMessages.critical((e as any).message, {
+        title: "Unable to save resource",
+        timeout: FLASH_MESSAGES_LONG_TIMEOUT,
+      });
+      this.resetLocalState();
+    }
+  });
 }
 
 declare module "@glint/environment-ember-loose/registry" {
