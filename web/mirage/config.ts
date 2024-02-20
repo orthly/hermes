@@ -32,7 +32,9 @@ export default function (mirageConfig) {
        * Reviews the request and determines how to respond.
        */
       const handleAlgoliaRequest = (schema, request) => {
+        const indexName = request.url.split("indexes/")[1].split("/")[0];
         const requestBody = JSON.parse(request.requestBody);
+
         if (requestBody) {
           const { facetQuery, query } = requestBody;
           let { facetFilters } = requestBody;
@@ -68,6 +70,7 @@ export default function (mirageConfig) {
               );
             }
           } else if (facetQuery) {
+            // Product/area search
             let facetMatch = schema.document.all().models.filter((doc) => {
               return doc.attrs.product
                 .toLowerCase()
@@ -85,9 +88,36 @@ export default function (mirageConfig) {
           } else if (query !== undefined) {
             /**
              * A query exists, but may be empty.
-             * Typically, this is a query for a document title or product,
+             * Typically, this is a query for a document, project or product,
              * but sometimes it's a query by some optionalFilters.
              */
+            if (indexName?.includes("projects")) {
+              const projects = schema.projects
+                .all()
+                .models.filter((project) => {
+                  return (
+                    project.attrs.title
+                      .toLowerCase()
+                      .includes(query.toLowerCase()) ||
+                    project.attrs.description
+                      ?.toLowerCase()
+                      .includes(query.toLowerCase())
+                  );
+                });
+
+              return new Response(
+                200,
+                {},
+                {
+                  hits: projects.map((project) => {
+                    return {
+                      ...project.attrs,
+                      objectID: project.attrs.id,
+                    };
+                  }),
+                },
+              );
+            }
 
             let docMatches = [];
             let idsToExclude: string[] = [];
@@ -342,9 +372,20 @@ export default function (mirageConfig) {
 
       // Fetch a single project.
       this.get("/projects/:project_id", (schema, request) => {
+        const shouldAddToRecentlyViewed =
+          request.requestHeaders["Add-To-Recently-Viewed"];
+
         const project = schema.projects.findBy({
           id: request.params.project_id,
         });
+
+        if (shouldAddToRecentlyViewed) {
+          schema.recentlyViewedProjects.create({
+            id: project.attrs.id,
+            viewedTime: Date.now(),
+          });
+        }
+
         return new Response(200, {}, project.attrs);
       });
 
@@ -867,7 +908,19 @@ export default function (mirageConfig) {
         let index = schema.recentlyViewedDocs.all().models.map((doc) => {
           return doc.attrs;
         });
-        return new Response(200, {}, index.slice(0, 10));
+        return new Response(200, {}, index);
+      });
+
+      /**
+       * Used in the dashboard to show recently viewed projects
+       */
+      this.get("/me/recently-viewed-projects", (schema) => {
+        let index = schema.recentlyViewedProjects
+          .all()
+          .models.map((project) => {
+            return project.attrs;
+          });
+        return new Response(200, {}, index);
       });
 
       /**
