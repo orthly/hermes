@@ -45,7 +45,7 @@ func MeHandler(srv server.Server) http.Handler {
 			return
 		}
 
-    srv.Logger.Info("me request","user",userEmail)
+    srv.Logger.Error("me request","user",userEmail)
 
 		switch r.Method {
 		// The HEAD method is used to determine if the user is currently
